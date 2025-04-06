@@ -286,5 +286,67 @@ if (!class_exists('WC_Clover_API')) {
             
             return $body;
         }
+
+        /**
+         * Generic method to handle authenticated Clover API requests
+         */
+        public function request($endpoint, $method = 'GET', $body = null) {
+            if (empty($this->access_token) || empty($this->merchant_id)) {
+                return new WP_Error('clover_auth_error', __('Missing Clover credentials.', 'wc-clover-integration'));
+            }
+
+            $url = $this->api_base_url . '/merchants/' . $this->merchant_id . '/' . ltrim($endpoint, '/');
+
+            $args = [
+                'method'  => $method,
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $this->access_token,
+                    'Content-Type'  => 'application/json'
+                ],
+            ];
+
+            if ($body) {
+                $args['body'] = json_encode($body);
+            }
+
+            $response = wp_remote_request($url, $args);
+
+            if (is_wp_error($response)) {
+                return $response;
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            $response_body = json_decode(wp_remote_retrieve_body($response), true);
+
+            if ($code >= 200 && $code < 300) {
+                return $response_body;
+            }
+
+            return new WP_Error('clover_api_error', __('API call failed', 'wc-clover-integration'), [
+                'code' => $code,
+                'response' => $response_body
+            ]);
+        }
+
+        /**
+         * Get inventory items from Clover
+         */
+        public function get_inventory_items() {
+            return $this->request('items');
+        }
+
+        /**
+         * Get categories from Clover
+         */
+        public function get_categories() {
+            return $this->request('categories');
+        }
+
+        /**
+         * Get modifier groups from Clover
+         */
+        public function get_modifier_groups() {
+            return $this->request('modifier_groups');
+        }
     }
 }

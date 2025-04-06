@@ -1246,3 +1246,63 @@ add_action('init', function () {
         exit;
     }
 });
+
+/**
+ * Handle /clover-callback endpoint for OAuth
+ */
+add_action('init', function () {
+    if (strpos($_SERVER['REQUEST_URI'], '/clover-callback') !== false) {
+        $auth_code = sanitize_text_field($_GET['code'] ?? '');
+        $merchant_id = sanitize_text_field($_GET['merchant_id'] ?? '');
+        $client_id = 'WHCTTCCZTRHN2';
+        $client_secret = get_option('clover_client_secret'); // fetched from backend settings
+
+        if (empty($client_secret) || strlen($client_secret) < 40) {
+            wp_die('❌ Client secret is missing or invalid length.');
+        }
+
+        if (empty($auth_code)) {
+            wp_die('❌ Missing authorization code from Clover.');
+        }
+
+        $response = wp_remote_post('https://api.clover.com/oauth/token', [
+            'body' => [
+                'client_id' => $client_id,
+                'client_secret' => $client_secret,
+                'code' => $auth_code,
+                'redirect_uri' => 'https://nyckingsdeliandpizza.com/clover-callback',
+                'grant_type' => 'authorization_code'
+            ]
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die('❌ Error requesting token: ' . $response->get_error_message());
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (!empty($body['access_token'])) {
+            update_option('clover_access_token', $body['access_token']);
+            update_option('clover_merchant_id', $merchant_id);
+            wp_die('✅ Clover connected successfully!');
+        } else {
+            wp_die('❌ Failed to retrieve access token. Response: <pre>' . print_r($body, true) . '</pre>');
+        }
+    }
+});
+
+/**
+ * Add admin settings link for testing "Connect to Clover" button
+ */
+add_action('admin_menu', function () {
+    add_menu_page('Clover Integration', 'Clover Integration', 'manage_options', 'clover-integration', function () {
+        $client_id = 'WHCTTCCZTRHN2';
+        $redirect_uri = urlencode('https://nyckingsdeliandpizza.com/clover-callback');
+        $oauth_url = "https://www.clover.com/oauth/authorize?client_id={$client_id}&response_type=code&redirect_uri={$redirect_uri}";
+
+        echo '<div class="wrap">';
+        echo '<h1>Clover Integration</h1>';
+        echo '<a class="button button-primary" href="' . esc_url($oauth_url) . '">Connect to Clover</a>';
+        echo '</div>';
+    });
+});
