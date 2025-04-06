@@ -741,12 +741,12 @@ class WC_Clover_Integration {
      */
     private function get_oauth_url() {
         // Use direct callback approach with query parameter
-        $callback_url = add_query_arg('clover-action', 'oauth-callback', home_url('/'));
+        $callback_url = urlencode(home_url('/?clover-action=oauth-callback'));
         
         // Determine the base URL based on sandbox mode
         $base_url = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes'
             ? 'https://sandbox.dev.clover.com/oauth/authorize'
-            : 'https://api.clover.com/oauth/authorize';
+            : 'https://www.clover.com/oauth/authorize';
 
         $oauth_params = array(
             'client_id' => $this->settings['client_id'],
@@ -1133,3 +1133,72 @@ function wc_clover_integration_init() {
 
 // Start the plugin
 add_action('plugins_loaded', 'wc_clover_integration_init');
+
+/**
+ * Register the clover-action query var
+ */
+add_action('init', 'clover_register_query_var');
+function clover_register_query_var() {
+    add_rewrite_tag('%clover-action%', '([^&]+)');
+}
+
+/**
+ * Flush rewrite rules on plugin activation
+ */
+register_activation_hook(__FILE__, function () {
+    clover_register_query_var();
+    flush_rewrite_rules();
+});
+
+/**
+ * Handle the OAuth callback
+ */
+add_action('template_redirect', 'clover_handle_oauth_callback');
+function clover_handle_oauth_callback() {
+    if (get_query_var('clover-action') === 'oauth-callback') {
+        // Log the callback for debugging
+        WC_Clover_Logger::log('OAuth callback triggered. GET params: ' . json_encode($_GET), 'debug');
+
+        // Get the auth code and other parameters
+        $auth_code = sanitize_text_field($_GET['code'] ?? '');
+        $merchant_id = sanitize_text_field($_GET['merchant_id'] ?? '');
+        $client_id = sanitize_text_field($_GET['client_id'] ?? '');
+
+        if ($auth_code) {
+            // Exchange the auth code for an access token
+            $response = wp_remote_post('https://api.clover.com/oauth/token', [
+                'body' => [
+                    'client_id' => 'YOUR_CLIENT_ID', // Replace with your actual client ID
+                    'client_secret' => 'YOUR_CLIENT_SECRET', // Replace with your actual client secret
+                    'code' => $auth_code,
+                    'redirect_uri' => home_url('/?clover-action=oauth-callback'),
+                    'grant_type' => 'authorization_code'
+                ]
+            ]);
+
+            if (is_wp_error($response)) {
+                WC_Clover_Logger::log('Error exchanging auth code: ' . $response->get_error_message(), 'error');
+                wp_die('Error: ' . $response->get_error_message());
+            }
+
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+
+            if (isset($body['access_token'])) {
+                // Save the access token and merchant ID
+                update_option('clover_access_token', $body['access_token']);
+                update_option('clover_merchant_id', $merchant_id);
+
+                WC_Clover_Logger::log('Clover connected successfully. Access token saved.', 'info');
+                wp_die('✅ Clover connected! Token saved.');
+            } else {
+                WC_Clover_Logger::log('Token request failed. Response: ' . json_encode($body), 'error');
+                wp_die('⚠️ Token request failed. Response: <pre>' . print_r($body, true) . '</pre>');
+            }
+        } else {
+            WC_Clover_Logger::log('OAuth callback missing auth code.', 'error');
+            wp_die('❌ Missing auth code.');
+        }
+
+        exit;
+    }
+}
