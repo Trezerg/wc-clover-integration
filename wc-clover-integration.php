@@ -449,17 +449,17 @@ class WC_Clover_Integration {
      * Register OAuth endpoint for Clover API
      */
     public function register_oauth_endpoint() {
-        // Add rewrite rules
-        add_rewrite_rule('^clover-oauth-callback/?', 'index.php?clover-oauth-callback=1', 'top');
-        add_rewrite_tag('%clover-oauth-callback%', '1');
+        // Register the endpoint
+        add_rewrite_rule('^clover-oauth-callback/?$', 'index.php?clover-oauth-callback=1', 'top');
+        add_rewrite_tag('%clover-oauth-callback%', '([0-1]+)');
         
-        // Check if we need to flush rewrite rules
-        if (get_option('wc_clover_flush_rules', 'yes') === 'yes') {
-            flush_rewrite_rules();
-            update_option('wc_clover_flush_rules', 'no');
+        // Alternative direct method if rewrite rules don't work
+        if (isset($_GET['clover-action']) && $_GET['clover-action'] === 'oauth-callback') {
+            $this->handle_direct_oauth_callback();
+            exit;
         }
         
-        // Handle OAuth callback
+        // Standard method using query vars
         if (get_query_var('clover-oauth-callback')) {
             $this->handle_oauth_callback();
             exit;
@@ -467,21 +467,43 @@ class WC_Clover_Integration {
     }
 
     /**
-     * Handle OAuth callback from Clover
+     * Handle direct OAuth callback
      */
-    private function handle_oauth_callback() {
+    public function handle_direct_oauth_callback() {
         // Log the callback request for debugging
-        WC_Clover_Logger::log('OAuth callback triggered with query vars: ' . json_encode($_GET), 'debug');
+        WC_Clover_Logger::log('Direct OAuth callback triggered with GET: ' . json_encode($_GET), 'debug');
+        WC_Clover_Logger::log('SERVER vars: ' . json_encode($_SERVER), 'debug');
 
-        // Check if this is a callback from Clover
         if (!isset($_GET['code'])) {
             WC_Clover_Logger::log('OAuth callback missing "code" parameter.', 'error');
             wp_die('Invalid OAuth callback. Missing authorization code.');
         }
 
-        // Get the authorization code
-        $code = sanitize_text_field($_GET['code']);
+        $this->process_oauth_callback($_GET['code']);
+    }
 
+    /**
+     * Handle standard OAuth callback
+     */
+    private function handle_oauth_callback() {
+        // Log EVERYTHING for debugging
+        WC_Clover_Logger::log('OAuth callback triggered. Full $_GET: ' . json_encode($_GET), 'debug');
+        WC_Clover_Logger::log('SERVER vars: ' . json_encode($_SERVER), 'debug');
+
+        if (!isset($_GET['code'])) {
+            WC_Clover_Logger::log('OAuth callback missing "code" parameter.', 'error');
+            wp_die('Invalid OAuth callback. Missing authorization code.');
+        }
+
+        $this->process_oauth_callback($_GET['code']);
+    }
+
+    /**
+     * Process OAuth callback
+     */
+    private function process_oauth_callback($code) {
+        $code = sanitize_text_field($code);
+        
         // Re-initialize the Clover API with current settings
         $this->init_clover_api();
 
@@ -499,10 +521,8 @@ class WC_Clover_Integration {
 
         update_option('wc_clover_integration_settings', $this->settings);
 
-        // Log success
         WC_Clover_Logger::log('OAuth successful. Access token and merchant ID saved.', 'info');
 
-        // Redirect to settings page
         wp_redirect(admin_url('admin.php?page=wc-clover-integration&oauth=success'));
         exit;
     }
@@ -718,21 +738,23 @@ class WC_Clover_Integration {
      * Get OAuth URL for Clover
      */
     private function get_oauth_url() {
-        $sandbox_mode = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes';
-        $callback_url = home_url('clover-oauth-callback');
+        // Use direct callback approach
+        $callback_url = add_query_arg('clover-action', 'oauth-callback', home_url('/'));
         
         // Determine the base URL based on sandbox mode
-        $base_url = $sandbox_mode 
+        $base_url = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes'
             ? 'https://sandbox.dev.clover.com/oauth/authorize'
             : 'https://api.clover.com/oauth/authorize';
 
-        $oauth_url = add_query_arg(array(
+        $oauth_params = array(
             'client_id' => $this->settings['client_id'],
             'response_type' => 'code',
             'redirect_uri' => $callback_url
-        ), $base_url);
+        );
 
-        WC_Clover_Logger::log("Generated OAuth URL: " . $oauth_url, 'debug');
+        $oauth_url = $base_url . '?' . http_build_query($oauth_params);
+        
+        WC_Clover_Logger::log('Generated OAuth URL: ' . $oauth_url, 'debug');
         
         return $oauth_url;
     }
