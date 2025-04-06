@@ -111,12 +111,15 @@ class WC_Clover_Integration {
      * Initialize Clover API client
      */
     private function init_clover_api() {
+        $sandbox_mode = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes';
+        WC_Clover_Logger::log("Initializing Clover API with sandbox mode: " . ($sandbox_mode ? "yes" : "no"), 'debug');
+        
         $this->clover_api = new WC_Clover_API(
             $this->settings['client_id'],
             $this->settings['client_secret'],
             $this->settings['access_token'],
             $this->settings['merchant_id'],
-            isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes' // Pass sandbox_mode
+            $sandbox_mode
         );
     }
 
@@ -446,8 +449,15 @@ class WC_Clover_Integration {
      * Register OAuth endpoint for Clover API
      */
     public function register_oauth_endpoint() {
+        // Add rewrite rules
         add_rewrite_rule('^clover-oauth-callback/?', 'index.php?clover-oauth-callback=1', 'top');
         add_rewrite_tag('%clover-oauth-callback%', '1');
+        
+        // Check if we need to flush rewrite rules
+        if (get_option('wc_clover_flush_rules', 'yes') === 'yes') {
+            flush_rewrite_rules();
+            update_option('wc_clover_flush_rules', 'no');
+        }
         
         // Handle OAuth callback
         if (get_query_var('clover-oauth-callback')) {
@@ -616,7 +626,14 @@ class WC_Clover_Integration {
         
         // Add OAuth button if client ID and secret are set
         if (!empty($this->settings['client_id']) && !empty($this->settings['client_secret'])) {
-            echo '<a href="' . esc_url($this->get_oauth_url()) . '" class="button button-primary">' . __('Connect to Clover', 'wc-clover-integration') . '</a>';
+            $oauth_url = $this->get_oauth_url();
+            echo '<a href="' . esc_url($oauth_url) . '" target="_blank" class="button button-primary">' . 
+                __('Connect to Clover', 'wc-clover-integration') . '</a>';
+            
+            // Debug output in development/debug mode
+            if (isset($this->settings['debug_mode']) && $this->settings['debug_mode'] === 'yes') {
+                echo '<p class="description">Debug: OAuth URL is: ' . esc_html($oauth_url) . '</p>';
+            }
         } else {
             echo '<p class="description">' . __('Enter Client ID and Client Secret, then save settings to enable OAuth connection.', 'wc-clover-integration') . '</p>';
         }
@@ -701,19 +718,23 @@ class WC_Clover_Integration {
      * Get OAuth URL for Clover
      */
     private function get_oauth_url() {
-        $callback_url = home_url('clover-oauth-callback'); // Do not encode here, as http_build_query will handle it
-
-        // Determine the base URL based on sandbox_mode
-        $base_url = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes'
+        $sandbox_mode = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes';
+        $callback_url = home_url('clover-oauth-callback');
+        
+        // Determine the base URL based on sandbox mode
+        $base_url = $sandbox_mode 
             ? 'https://sandbox.dev.clover.com/oauth/authorize'
             : 'https://api.clover.com/oauth/authorize';
 
-        // Generate the OAuth URL
-        return $base_url . '?' . http_build_query(array(
+        $oauth_url = add_query_arg(array(
             'client_id' => $this->settings['client_id'],
             'response_type' => 'code',
-            'redirect_uri' => $callback_url // Let http_build_query handle encoding
-        ));
+            'redirect_uri' => $callback_url
+        ), $base_url);
+
+        WC_Clover_Logger::log("Generated OAuth URL: " . $oauth_url, 'debug');
+        
+        return $oauth_url;
     }
 
     /**

@@ -14,19 +14,15 @@ if (!class_exists('WC_Clover_API')) {
     class WC_Clover_API {
         
         /**
-         * API credentials
+         * API credentials and config
          */
         private $client_id;
         private $client_secret;
         private $access_token;
         private $merchant_id;
-        
-        /**
-         * API endpoints
-         */
+        private $sandbox_mode;
         private $api_base_url;
         private $oauth_token_url;
-        private $sandbox_mode;
         
         /**
          * Constructor
@@ -47,7 +43,7 @@ if (!class_exists('WC_Clover_API')) {
                 $this->oauth_token_url = 'https://api.clover.com/oauth/token';
             }
             
-            WC_Clover_Logger::log("Clover API initialized with " . ($sandbox_mode ? "sandbox" : "production") . " environment", 'info');
+            WC_Clover_Logger::log("Initialized Clover API in " . ($sandbox_mode ? "sandbox" : "production") . " mode", 'debug');
         }
         
         /**
@@ -56,6 +52,9 @@ if (!class_exists('WC_Clover_API')) {
         public function get_access_token($code) {
             $callback_url = home_url('clover-oauth-callback');
             
+            WC_Clover_Logger::log("Getting access token from " . $this->oauth_token_url, 'debug');
+            WC_Clover_Logger::log("Using callback URL: " . $callback_url, 'debug');
+
             $response = wp_remote_post($this->oauth_token_url, array(
                 'method' => 'POST',
                 'body' => array(
