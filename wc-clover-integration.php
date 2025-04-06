@@ -741,7 +741,7 @@ class WC_Clover_Integration {
      */
     private function get_oauth_url() {
         // Use direct callback approach with query parameter
-        $callback_url = urlencode(home_url('/?clover-action=oauth-callback'));
+        $callback_url = home_url('/?clover-action=oauth-callback');
         
         // Determine the base URL based on sandbox mode
         $base_url = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes'
