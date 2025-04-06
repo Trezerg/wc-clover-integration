@@ -648,9 +648,11 @@ class WC_Clover_Integration {
         
         // Add OAuth button if client ID and secret are set
         if (!empty($this->settings['client_id']) && !empty($this->settings['client_secret'])) {
-            $oauth_url = $this->get_oauth_url();
-            echo '<a href="' . esc_url($oauth_url) . '" target="_blank" class="button button-primary">' . 
-                __('Connect to Clover', 'wc-clover-integration') . '</a>';
+            $client_id = $this->settings['client_id'];
+            $redirect_uri = urlencode(home_url('/clover-callback'));
+            $oauth_url = "https://www.clover.com/oauth/authorize?client_id={$client_id}&response_type=code&redirect_uri={$redirect_uri}";
+            
+            echo '<a href="' . esc_url($oauth_url) . '" class="button button-primary">' . __('Connect to Clover', 'wc-clover-integration') . '</a>';
             
             // Debug output in development/debug mode
             if (isset($this->settings['debug_mode']) && $this->settings['debug_mode'] === 'yes') {
@@ -741,12 +743,12 @@ class WC_Clover_Integration {
      */
     private function get_oauth_url() {
         // Use direct callback approach with query parameter
-        $callback_url = home_url('/?clover-action=oauth-callback');
+        $callback_url = add_query_arg('clover-action', 'oauth-callback', home_url('/'));
         
         // Determine the base URL based on sandbox mode
         $base_url = isset($this->settings['sandbox_mode']) && $this->settings['sandbox_mode'] === 'yes'
             ? 'https://sandbox.dev.clover.com/oauth/authorize'
-            : 'https://www.clover.com/oauth/authorize';
+            : 'https://api.clover.com/oauth/authorize';
 
         $oauth_params = array(
             'client_id' => $this->settings['client_id'],
@@ -1202,3 +1204,45 @@ function clover_handle_oauth_callback() {
         exit;
     }
 }
+
+/**
+ * Handle /clover-callback endpoint
+ */
+add_action('init', function () {
+    $request_uri = $_SERVER['REQUEST_URI'];
+
+    if (strpos($request_uri, '/clover-callback') !== false) {
+        $auth_code = sanitize_text_field($_GET['code'] ?? '');
+        $merchant_id = sanitize_text_field($_GET['merchant_id'] ?? '');
+
+        if (!$auth_code) {
+            wp_die('Missing authorization code');
+        }
+
+        // Exchange code for token
+        $response = wp_remote_post('https://api.clover.com/oauth/token', [
+            'body' => [
+                'client_id' => 'WHCTTCCZTRHN2', // Replace with your actual client ID
+                'client_secret' => 'YOUR_CLIENT_SECRET', // Replace with your actual client secret
+                'code' => $auth_code,
+                'redirect_uri' => home_url('/clover-callback'),
+                'grant_type' => 'authorization_code'
+            ]
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die('Token error: ' . $response->get_error_message());
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        if (!empty($body['access_token'])) {
+            update_option('clover_access_token', $body['access_token']);
+            update_option('clover_merchant_id', $merchant_id);
+            wp_die('✅ Clover connected successfully!');
+        } else {
+            wp_die('❌ Failed to retrieve access token. Response: <pre>' . print_r($body, true) . '</pre>');
+        }
+
+        exit;
+    }
+});
