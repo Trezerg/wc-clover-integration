@@ -130,8 +130,9 @@ class WC_Clover_Integration {
         // Hook into WooCommerce order creation
         add_action('woocommerce_checkout_order_processed', array($this, 'process_new_order'), 10, 3);
         
-        // Add OAuth callback endpoint
-        add_action('init', array($this, 'register_oauth_endpoint'));
+        // Register query vars and handle OAuth callback
+        add_action('init', array($this, 'register_query_vars'));
+        add_action('init', array($this, 'handle_oauth_callback'));
         
         // Add settings link to plugins page
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), array($this, 'add_settings_link'));
@@ -446,6 +447,63 @@ class WC_Clover_Integration {
     }
 
     /**
+     * Register query variables
+     */
+    public function register_query_vars() {
+        add_rewrite_tag('%clover-action%', '([^&]+)');
+        
+        // Flush rewrite rules if needed
+        if (get_option('wc_clover_flush_rules', 'yes') === 'yes') {
+            flush_rewrite_rules();
+            update_option('wc_clover_flush_rules', 'no');
+            WC_Clover_Logger::log('Flushed rewrite rules', 'debug');
+        }
+    }
+
+    /**
+     * Handle OAuth callback
+     */
+    public function handle_oauth_callback() {
+        if (isset($_GET['clover-action']) && $_GET['clover-action'] === 'oauth-callback') {
+            WC_Clover_Logger::log('OAuth callback received. GET params: ' . json_encode($_GET), 'debug');
+            
+            if (!empty($_GET['code'])) {
+                $auth_code = sanitize_text_field($_GET['code']);
+                
+                try {
+                    // Re-initialize the Clover API
+                    $this->init_clover_api();
+                    
+                    // Exchange code for access token
+                    $response = $this->clover_api->get_access_token($auth_code);
+                    
+                    if (is_wp_error($response)) {
+                        throw new Exception($response->get_error_message());
+                    }
+                    
+                    // Save access token and merchant ID
+                    $this->settings['access_token'] = $response['access_token'];
+                    $this->settings['merchant_id'] = $response['merchant_id'];
+                    update_option('wc_clover_integration_settings', $this->settings);
+                    
+                    WC_Clover_Logger::log('OAuth successful. Access token and merchant ID saved.', 'info');
+                    
+                    // Redirect to settings page
+                    wp_redirect(admin_url('admin.php?page=wc-clover-integration&oauth=success'));
+                    exit;
+                    
+                } catch (Exception $e) {
+                    WC_Clover_Logger::log('OAuth error: ' . $e->getMessage(), 'error');
+                    wp_die('Error during OAuth: ' . esc_html($e->getMessage()));
+                }
+            } else {
+                WC_Clover_Logger::log('OAuth callback missing code parameter', 'error');
+                wp_die('Invalid OAuth callback: No authorization code received.');
+            }
+        }
+    }
+
+    /**
      * Register OAuth endpoint for Clover API
      */
     public function register_oauth_endpoint() {
@@ -738,7 +796,7 @@ class WC_Clover_Integration {
      * Get OAuth URL for Clover
      */
     private function get_oauth_url() {
-        // Use direct callback approach
+        // Use direct callback approach with query parameter
         $callback_url = add_query_arg('clover-action', 'oauth-callback', home_url('/'));
         
         // Determine the base URL based on sandbox mode
@@ -753,7 +811,6 @@ class WC_Clover_Integration {
         );
 
         $oauth_url = $base_url . '?' . http_build_query($oauth_params);
-        
         WC_Clover_Logger::log('Generated OAuth URL: ' . $oauth_url, 'debug');
         
         return $oauth_url;
